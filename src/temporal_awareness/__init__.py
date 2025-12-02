@@ -1,4 +1,4 @@
-"""Temporal Reasoning: Detecting and steering temporal scope in LLMs."""
+"""Temporal Awareness: Detecting and steering temporal preference in LLMs."""
 
 __version__ = "0.1.0"
 

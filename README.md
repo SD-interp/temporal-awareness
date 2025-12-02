@@ -1,15 +1,36 @@
-# Temporal Reasoning
+# Temporal Awareness
 
-Research on detecting and steering temporal scope representations in LLMs.
+> "I want my time to grant me what time can't grant itself."
+> — Al-Mutannabi
+
+Research on detecting and steering temporal awareness in LLMs.
 
 ## Overview
 
-This project investigates how LLMs encode temporal reasoning (immediate vs long-term thinking) and whether we can steer this behavior using Contrastive Activation Addition (CAA).
+This project investigates how LLMs encode temporal reasoning and whether we can:
+1. **Detect** temporal preference from internal representations
+2. **Steer** temporal orientation via activation engineering
+3. **Measure** divergence between stated and internal time horizons
 
 **Key findings:**
-- GPT-2 encodes temporal scope with 99% linear separability (explicit markers)
-- Probe accuracy drops to ~50% without explicit temporal keywords
-- Steering vectors can shift model outputs toward immediate or long-term framing
+- GPT-2 encodes temporal scope with 92.5% linear separability
+- Steering validation: r=0.935 correlation between steering and probe predictions
+- Late layers (6-11) encode semantic temporal features robust to keyword removal
+
+## Framework
+
+We ground temporal awareness in **intertemporal preference**:
+
+```
+U(o_i; θ) = u(r_i) · D(t_i; θ)     # Value function
+t_internal = inf{t : D(t) ≤ α}     # Internal horizon
+```
+
+**Key questions:**
+- Does `t_internal ≈ t_h` (stated horizon)?
+- Can we detect divergence between stated and internal preference?
+
+See [docs/research_plan.md](docs/research_plan.md) for full framework.
 
 ## Setup
 
@@ -21,36 +42,26 @@ cp .env.example .env  # Add API keys
 ## Structure
 
 ```
-temporal-reasoning/
+temporal-awareness/
 ├── data/
-│   ├── raw/                 # Original datasets
+│   ├── raw/                 # Intertemporal preference datasets
 │   ├── validated/           # Human-validated
-│   ├── processed/           # Train/val/test splits
-│   └── adversarial/         # Edge cases
+│   └── processed/           # Train/val/test splits
 ├── scripts/
-│   ├── data/                # Dataset generation
-│   ├── extraction/          # Activation extraction
-│   ├── probes/              # Probe training
-│   ├── circuits/            # Causal analysis
+│   ├── probes/              # Probe training & validation
 │   └── analysis/            # Figures, metrics
-├── src/temporal_reasoning/  # Package code
-├── configs/                 # Experiment configs
-├── experiments/             # Tracked runs
-├── results/                 # Tables, figures, checkpoints
-├── notebooks/               # Analysis notebooks
-├── docs/                    # Documentation
+├── results/checkpoints/     # Trained probes & steering vectors
+├── docs/
+│   ├── research_plan.md     # Full framework & roadmap
+│   └── RELATED_WORK.md      # Literature review
 └── paper/                   # Manuscript
 ```
 
 ## Quick Start
 
 ```python
-from temporal_reasoning import SteeringFramework, get_model_config
-import json
-
-# Load dataset
-with open("data/raw/temporal_scope_caa.json") as f:
-    data = json.load(f)
+from latents import SteeringFramework
+from latents.model_adapter import get_model_config
 
 # Use latents library for extraction and steering
 ```
@@ -58,17 +69,14 @@ with open("data/raw/temporal_scope_caa.json") as f:
 ```bash
 # Train probes
 python scripts/probes/train_temporal_probes_caa.py
-
-# Validate
-python scripts/probes/validate_dataset_split.py
 ```
 
 ## Related Work
 
-See [docs/RELATED_WORK.md](docs/RELATED_WORK.md) for literature review:
-- Time-R1: Temporal reasoning framework ([arXiv:2505.13508](https://arxiv.org/abs/2505.13508))
-- CAA: Contrastive Activation Addition ([ACL 2024](https://arxiv.org/abs/2312.06681))
-- Temporal Alignment via Activation Engineering ([arXiv:2505.14158](https://arxiv.org/abs/2505.14158))
+See [docs/RELATED_WORK.md](docs/RELATED_WORK.md):
+- Zhu et al. 2025: Steering Risk Preferences via Behavioral-Neural Alignment
+- Mazyaki et al. 2025: Temporal Preferences in LLMs for Long-Horizon Assistance
+- Time-R1: Comprehensive temporal reasoning ([arXiv:2505.13508](https://arxiv.org/abs/2505.13508))
 
 ## Public Datasets
 
@@ -76,7 +84,6 @@ See [docs/RELATED_WORK.md](docs/RELATED_WORK.md) for literature review:
 |---------|--------|------|
 | Time-Bench | Time-R1 | [HuggingFace](https://huggingface.co/datasets/ulab-ai/Time-Bench) |
 | Test of Time | Google | [HuggingFace](https://huggingface.co/datasets/baharef/ToT) |
-| TIME | NeurIPS 2025 | [arXiv:2505.12891](https://arxiv.org/abs/2505.12891) |
 
 ## License
 

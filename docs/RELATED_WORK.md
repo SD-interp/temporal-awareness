@@ -336,6 +336,63 @@ CAA and Temporal Alignment papers directly validate our approach:
 
 ---
 
+## 8. Intertemporal Preferences & Risk
+
+### Temporal Preferences in Language Models for Long-Horizon Assistance
+
+**Authors:** Ali Mazyaki, Mohammad Naghizadeh, Samaneh Ranjkhah Zonouzaghi, Hossein Setareh
+
+**Venue:** arXiv 2025
+
+**ArXiv:** [arXiv:2509.09704](https://arxiv.org/abs/2509.09704)
+
+**Summary:**
+Investigates whether LLMs demonstrate future-oriented or present-oriented preferences in time-based decisions, adapting human psychology experiments to test various LMs on time-tradeoff tasks.
+
+**Key Contributions:**
+1. **Manipulability of Time Orientation (MTO)**: New metric measuring how much an LM's time preference changes between future- and present-oriented prompts
+2. **Model Behavior**: Reasoning-focused models (DeepSeek-Reasoner, grok-3-mini) can be influenced toward future-oriented choices through prompting
+3. **Design Implications**: Considerations for AI assistants that align with diverse, long-term human goals
+
+**Relevance:** Directly addresses temporal preference manipulation in LLMs - validates our steering approach and provides behavioral benchmarks.
+
+---
+
+### Steering Risk Preferences in LLMs by Aligning Behavioral and Neural Representations
+
+**Authors:** Jian-Qiao Zhu, Haijiang Yan, Thomas L. Griffiths
+
+**Venue:** arXiv 2025
+
+**ArXiv:** [arXiv:2505.11615](https://arxiv.org/abs/2505.11615)
+
+**Summary:**
+Proposes method for identifying steering vectors that modify LLM behavior by aligning latent representations from behavioral experiments with neural activations, focusing on risk preferences.
+
+**Key Contributions:**
+1. **Representation Engineering Approach**: Systematic methodology for discovering steering vectors through behavioral-neural alignment
+2. **Risk Preference Extraction**: MCMC methods to extract latent preferences and map to neural activations
+3. **Empirical Validation**: Steering vectors effectively control risk-related outputs without fine-tuning
+
+**Relevance:** **Highly relevant** - provides methodological framework for our intertemporal preference work. Their behavioral-neural alignment approach could be applied to temporal discounting.
+
+---
+
+### A Financial Brain Scan of the LLM
+
+**Authors:** H. Chen, A. Didisheim, L. Somoza, H. Tian
+
+**Venue:** arXiv 2025
+
+**ArXiv:** [arXiv:2508.21285](https://arxiv.org/abs/2508.21285)
+
+**Summary:**
+Analyzes LLM internal representations through the lens of financial decision-making and risk assessment.
+
+**Relevance:** Complementary approach to understanding reward/value representations in LLMs.
+
+---
+
 ## Papers To Review
 
 - [ ] Back to the Future: Towards Explainable Temporal Reasoning with LLMs (arXiv:2310.01074)
