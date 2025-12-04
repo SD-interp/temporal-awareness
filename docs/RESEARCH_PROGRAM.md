@@ -1,6 +1,6 @@
 # Temporal Grounding: A Multi-Faceted Research Program
 
-**Understanding how LLMs represent, reason about, and fail on time**
+**Understanding how LLMs represent, reason about, and respond to time**
 
 ---
 
@@ -42,6 +42,7 @@ Each experiment requires its own purpose-built dataset, independent of Track A.
 | #10 | Coconut latent reasoning | Temporal decision tasks |
 | #11 | Active inference/phenomenology | Structured temporal cognition prompts |
 | #12 | Temporal defabrication (MPE) | Recursive generation + contemplative prompts |
+| #13 | Intertemporal preference framework | Reward/time tradeoff scenarios by domain |
 
 ---
 
@@ -84,6 +85,7 @@ Each experiment requires its own purpose-built dataset, independent of Track A.
 | #11 | Active inference | Precision decay, temporal depth, counterfactual exploration |
 | #11 | Phenomenology | Retention/protention, past/present/future modes |
 | #12 | MPE/Defabrication | Recursive generation causes temporal representation collapse |
+| #13 | Intertemporal preference | Reward-based discounting, internal vs. stated horizon |
 
 ---
 
@@ -131,6 +133,7 @@ What do failures reveal about representations?
 | 10 | Coconut latent reasoning | B | Theory | ⬜ |
 | 11 | Active inference/phenomenology | B | Theory | ⬜ |
 | 12 | Temporal defabrication (MPE) | B | Theory | ⬜ |
+| 13 | Intertemporal preference framework | B | Theory | ⬜ |
 | - | Probe validation | A | Foundations | ⚠️ Preliminary |
 
 ---
