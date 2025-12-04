@@ -49,6 +49,7 @@ Each experiment requires its own purpose-built dataset, independent of Track A.
 | #15 | Temporal complexity detection | Varying complexity prompts |
 | #16 | Multi-agent temporal collusion | Single vs multi-agent scenarios |
 | #17 | Probe reliability and guardrails | Distribution shift and edge cases |
+| #18 | Confidence vs temporal horizon | Questions at varying horizons |
 
 ---
 
@@ -148,6 +149,7 @@ What do failures reveal about representations?
 | 15 | Temporal complexity detection | B | Robustness | ⬜ |
 | 16 | Multi-agent temporal collusion | B | Robustness | ⬜ |
 | 17 | Probe reliability and guardrails | B | Robustness | ⬜ |
+| 18 | Confidence vs temporal horizon | B | Robustness | ⬜ |
 | - | Probe validation | A | Foundations | ⚠️ Preliminary |
 
 ---
