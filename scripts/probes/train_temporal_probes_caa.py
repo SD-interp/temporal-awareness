@@ -35,7 +35,7 @@ from tqdm import tqdm
 def load_caa_dataset(dataset_path):
     """Load CAA-format temporal dataset."""
     with open(dataset_path) as f:
-        data = json.load(f) 
+        data = json.load(f)
 
     if 'pairs' in data:
         pairs = data['pairs']
@@ -77,7 +77,8 @@ def extract_activations(model, decoder_blocks, tokenizer, prompt):
 
     def hook_fn(layer_idx):
         def hook(module, input, output):
-            # output is hidden_states: (batch, seq_len, d_model)
+            # output is either tuple of hidden_states or hidden_states
+            # hidden_states shape: (batch, seq_len, hidden_dim)
             # Take last token activation
             if isinstance(output, tuple):
                 activations[layer_idx] = output[0][0, -1, :].detach().cpu().numpy()
@@ -87,7 +88,6 @@ def extract_activations(model, decoder_blocks, tokenizer, prompt):
 
     # Register hooks for all layers
     hooks = []
-
     for i, layer in enumerate(decoder_blocks):
         hook = layer.register_forward_hook(hook_fn(i))
         hooks.append(hook)
