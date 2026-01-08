@@ -77,7 +77,7 @@ def extract_activations(model, decoder_blocks, tokenizer, prompt):
 
     def hook_fn(layer_idx):
         def hook(module, input, output):
-            # output is either tuple of hidden_states or hidden_states
+            # output is either tuple (hidden_states,...) or just hidden_states
             # hidden_states shape: (batch, seq_len, hidden_dim)
             # Take last token activation
             if isinstance(output, tuple):
