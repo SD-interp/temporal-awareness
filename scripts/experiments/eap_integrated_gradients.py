@@ -130,9 +130,6 @@ def main() -> None:
         clean_inputs = tokenizer(chunked_clean_prompts[i])
         corrupted_inputs = tokenizer(chunked_corrupted_prompts[i])
 
-        print(clean_inputs["input_ids"].shape)
-        print(corrupted_inputs["input_ids"].shape)
-
         eap_ig_scores = eap_integrated_gradients(  # (batch, pos)
             model,
             clean_inputs,
@@ -140,7 +137,9 @@ def main() -> None:
             metric_fn,
             NUM_STEPS,
         )
-        eap_ig_scores.apply(torch.nanmean, dim=-1, mask_aware=True)  # (batch,)
+        eap_ig_scores_cpu = eap_ig_scores.apply(
+            torch.nanmean, dim=-1, mask_aware=True
+        )  # (batch,)
 
         # Move scores to CPU to free GPU memory
         eap_ig_scores_cpu = eap_ig_scores.apply(lambda x: x.detach().cpu())
