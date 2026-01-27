@@ -19,9 +19,7 @@ RESULTS_PREFIX = "test_"
 
 OPTION_KEYS = ["(A)", "(B)"]
 NUM_STEPS = 10
-NUM_SAMPLES = (
-    None  # Set to an integer to limit the number of samples, or None to use all
-)
+NUM_SAMPLES = 20  # Set to an integer to limit the number of samples, or None to use all
 BATCH_SIZE = 5
 output_file = RESULTS_DIR / f"{RESULTS_PREFIX}eap_ig_scores.json"
 
@@ -143,7 +141,16 @@ def main() -> None:
             NUM_STEPS,
         )
         eap_ig_scores.apply(torch.nanmean, dim=-1, mask_aware=True)  # (batch,)
-        scores_list.append(eap_ig_scores)
+
+        # Move scores to CPU to free GPU memory
+        eap_ig_scores_cpu = eap_ig_scores.apply(lambda x: x.detach().cpu())
+        scores_list.append(eap_ig_scores_cpu)
+
+        # Delete temporary objects to free memory
+        del eap_ig_scores
+        del clean_inputs
+        del corrupted_inputs
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     scores = concat_activations(scores_list)
     scores = scores.apply(torch.mean)  # scalar
