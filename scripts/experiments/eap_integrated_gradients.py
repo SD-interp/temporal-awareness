@@ -17,7 +17,7 @@ INPUT_FILE = PROJECT_ROOT / "data" / "raw" / "temporal_scope_caa.json"
 RESULTS_DIR = PROJECT_ROOT / "results" / "eap_integrated_gradients"
 RESULTS_PREFIX = "test_"
 
-OPTION_KEYS = ["A", "B"]
+OPTION_KEYS = ["(A)", "(B)"]
 NUM_STEPS = 10
 NUM_SAMPLES = (
     None  # Set to an integer to limit the number of samples, or None to use all
@@ -69,7 +69,7 @@ def load_and_merge_pairs(
         )
         if swap:
             prompt = re.sub(
-                f"{f'({option_a})'}|{f'({option_b})'}",
+                f"{re.escape(option_a)}|{re.escape(option_b)}",
                 lambda m: option_b if m.group(0) == option_a else option_a,
                 prompt,
             )
@@ -128,11 +128,12 @@ def main() -> None:
 
     scores_list = []
 
-    for clean_prompts, corrupted_prompts in zip(
-        chunked_clean_prompts, chunked_corrupted_prompts
-    ):
-        clean_inputs = tokenizer(clean_prompts)
-        corrupted_inputs = tokenizer(corrupted_prompts)
+    for i in range(len(chunked_clean_prompts)):
+        clean_inputs = tokenizer(chunked_clean_prompts[i])
+        corrupted_inputs = tokenizer(chunked_corrupted_prompts[i])
+
+        print(clean_inputs["input_ids"].shape)
+        print(corrupted_inputs["input_ids"].shape)
 
         eap_ig_scores = eap_integrated_gradients(  # (batch, pos)
             model,
