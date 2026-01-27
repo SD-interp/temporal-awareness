@@ -6,11 +6,12 @@ import random
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 from ..common.io import load_json
 from ..common.schema_utils import SchemaClass
 from .model_runner import ModelRunner
+from .interventions import Intervention
 
 
 @dataclass
@@ -31,6 +32,7 @@ class QueryConfig(SchemaClass):
     max_new_tokens: int = 256
     temperature: float = 0.0
     subsample: float = 1.0
+    intervention: Optional[dict] = None  # Raw intervention config (loaded per-model)
 
 
 @dataclass
@@ -137,6 +139,7 @@ class QueryRunner:
             max_new_tokens=data.get("max_new_tokens", 256),
             temperature=data.get("temperature", 0.0),
             subsample=data.get("subsample", 1.0),
+            intervention=data.get("intervention"),
         )
 
     def _load_model(self, name: str) -> ModelRunner:
@@ -144,7 +147,19 @@ class QueryRunner:
             return self._model
         self._model = ModelRunner(model_name=name)
         self._model_name = name
+        self._intervention = None  # Reset intervention for new model
         return self._model
+
+    def _load_intervention(
+        self, model_runner: ModelRunner
+    ) -> Optional[Intervention]:
+        """Load intervention config for the current model."""
+        if self.config.intervention is None:
+            return None
+
+        from .intervention_loader import load_intervention_from_dict
+
+        return load_intervention_from_dict(self.config.intervention, model_runner)
 
     def load_dataset(self, dataset_id: str) -> dict:
         """Load dataset by ID."""
@@ -185,7 +200,11 @@ class QueryRunner:
 
         model_runner = self._load_model(model_name)
         activation_names = self._get_activation_names()
+        intervention = self._load_intervention(model_runner)
         preferences = []
+
+        if intervention is not None:
+            print(f"Using intervention: mode={intervention.mode} at layer {intervention.layer}")
 
         print(f"Querying LLM for {len(samples)} samples...")
         for i, sample in enumerate(samples):
@@ -206,13 +225,23 @@ class QueryRunner:
             )
             kv_cache.freeze()
 
-            # Step 2: Run generation using prefill logits and frozen cache
-            response = model_runner.generate_from_cache(
-                prefill_logits,
-                kv_cache,
-                max_new_tokens=self.config.max_new_tokens,
-                temperature=self.config.temperature,
-            )
+            # Step 2: Run generation
+            if intervention is not None:
+                # Use regular generate with intervention (no KV cache optimization)
+                response = model_runner.generate(
+                    prompt,
+                    max_new_tokens=self.config.max_new_tokens,
+                    temperature=self.config.temperature,
+                    intervention=intervention,
+                )
+            else:
+                # Use KV cache optimized generation
+                response = model_runner.generate_from_cache(
+                    prefill_logits,
+                    kv_cache,
+                    max_new_tokens=self.config.max_new_tokens,
+                    temperature=self.config.temperature,
+                )
             choice = parse_choice(response, short_label, long_label, choice_prefix)
 
             # Step 3: Capture internals
