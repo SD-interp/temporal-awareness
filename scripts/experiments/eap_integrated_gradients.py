@@ -19,7 +19,10 @@ RESULTS_PREFIX = "test_"
 
 OPTION_KEYS = ["A", "B"]
 NUM_STEPS = 10
-NUM_SAMPLES = 5  # Set to an integer to limit the number of samples, or None to use all
+NUM_SAMPLES = (
+    None  # Set to an integer to limit the number of samples, or None to use all
+)
+BATCH_SIZE = 5
 output_file = RESULTS_DIR / f"{RESULTS_PREFIX}eap_ig_scores.json"
 
 # Template that stitches question, immediate, and long-term parts into one prompt.
@@ -80,6 +83,7 @@ def main() -> None:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     ensure_mech_interp_toolkit_installed()
 
+    from mech_interp_toolkit.activation_utils import concat_activations
     from mech_interp_toolkit.gradient_based_attribution import (
         eap_integrated_gradients,
     )
@@ -100,31 +104,49 @@ def main() -> None:
         attn_type="sdpa",
     )
 
-    clean_prompts = load_and_merge_pairs(
-        INPUT_FILE, swap=False, num_samples=NUM_SAMPLES
-    )
-    corrupted_prompts = load_and_merge_pairs(
-        INPUT_FILE, swap=True, num_samples=NUM_SAMPLES
-    )
-
-    clean_inputs = tokenizer(clean_prompts)
-    corrupted_inputs = tokenizer(corrupted_prompts)
-
     token_a = tokenizer.tokenizer.encode(OPTION_KEYS[0], add_special_tokens=False)
     token_b = tokenizer.tokenizer.encode(OPTION_KEYS[1], add_special_tokens=False)
 
     def metric_fn(logits: torch.Tensor) -> torch.Tensor:
-        return (logits[:, -1, token_a] - logits[:, -1, token_b]).sum()
+        return (logits[:, -1, token_a] - logits[:, -1, token_b]).mean()
 
-    eap_ig_scores = eap_integrated_gradients(
-        model,
-        clean_inputs,
-        corrupted_inputs,
-        metric_fn,
-        NUM_STEPS,
+    def chunk_list(prompt_list):
+        return [
+            prompt_list[i : i + BATCH_SIZE]
+            for i in range(0, len(prompt_list), BATCH_SIZE)
+        ]
+
+    all_clean_prompts = load_and_merge_pairs(
+        INPUT_FILE, swap=False, num_samples=NUM_SAMPLES
+    )
+    all_corrupted_prompts = load_and_merge_pairs(
+        INPUT_FILE, swap=True, num_samples=NUM_SAMPLES
     )
 
-    scores_dict = {str(key): value.item() for key, value in eap_ig_scores.items()}
+    chunked_clean_prompts = chunk_list(all_clean_prompts)
+    chunked_corrupted_prompts = chunk_list(all_corrupted_prompts)
+
+    scores_list = []
+
+    for clean_prompts, corrupted_prompts in zip(
+        chunked_clean_prompts, chunked_corrupted_prompts
+    ):
+        clean_inputs = tokenizer(clean_prompts)
+        corrupted_inputs = tokenizer(corrupted_prompts)
+
+        eap_ig_scores = eap_integrated_gradients(  # (batch, pos)
+            model,
+            clean_inputs,
+            corrupted_inputs,
+            metric_fn,
+            NUM_STEPS,
+        )
+        eap_ig_scores.apply(torch.nanmean, dim=-1, mask_aware=True)  # (batch,)
+        scores_list.append(eap_ig_scores)
+
+    scores = concat_activations(scores_list)
+    scores = scores.apply(torch.mean)  # scalar
+    scores_dict = {str(key): value.item() for key, value in scores.items()}
     output_file.write_text(json.dumps(scores_dict, indent=2))
 
 
