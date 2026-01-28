@@ -2,6 +2,7 @@
 Run EAP Integrated Gradients on clean vs corrupted prompts and save scores to JSON.
 """
 
+import gc
 import importlib.util
 import json
 import re
@@ -137,18 +138,19 @@ def main() -> None:
             metric_fn,
             NUM_STEPS,
         )
-        eap_ig_scores_cpu = eap_ig_scores.apply(
+        eap_ig_scores = eap_ig_scores.apply(
             torch.nanmean, dim=-1, mask_aware=True
         )  # (batch,)
 
         # Move scores to CPU to free GPU memory
-        eap_ig_scores_cpu = eap_ig_scores.apply(lambda x: x.detach().cpu())
-        scores_list.append(eap_ig_scores_cpu)
+        eap_ig_scores = eap_ig_scores.apply(lambda x: x.detach().cpu())
+        scores_list.append(eap_ig_scores)
 
         # Delete temporary objects to free memory
         del eap_ig_scores
         del clean_inputs
         del corrupted_inputs
+        gc.collect()
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
 
     scores = concat_activations(scores_list)
