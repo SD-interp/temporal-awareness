@@ -172,21 +172,30 @@ def run_experiment(args: ExperimentArgs) -> int:
             print("STEP 3: ACTIVATION PATCHING")
             print("=" * 60)
 
+            # Get activation patching config (with defaults for backwards compatibility)
+            act_n_layers = config.get("act_patch_n_layers_sample", 12)
+            act_component = config.get("act_patch_component", "resid_post")
+            act_pos_step = config.get("act_patch_position_step", 1)
+
             with P("activation_patching"):
                 pos_sweep, full_sweep, filtered_pos, token_labels, section_markers = run_activation_patching(
                     runner, pref_data,
                     max_pairs=config["max_pairs"],
                     threshold=config["position_threshold"],
+                    component=act_component,
+                    n_layers_sample=act_n_layers,
+                    position_step=act_pos_step,
                 )
 
             print(f"Position sweep: max={pos_sweep.max():.3f}, argmax={np.argmax(pos_sweep)}")
             print(f"Filtered positions: {len(filtered_pos)} (threshold={config['position_threshold']})")
             print(f"Full sweep shape: {full_sweep.shape}")
+            print(f"Component: {act_component}, Layers sampled: {act_n_layers}, Position step: {act_pos_step}")
 
-            # Compute layer indices used
-            n_layers_sample = min(12, runner.n_layers)
-            if n_layers_sample > 1:
-                layer_indices = [int(i * (runner.n_layers - 1) / (n_layers_sample - 1)) for i in range(n_layers_sample)]
+            # Compute layer indices used (must match run_activation_patching logic)
+            actual_n_layers = min(act_n_layers, runner.n_layers)
+            if actual_n_layers > 1:
+                layer_indices = [int(i * (runner.n_layers - 1) / (actual_n_layers - 1)) for i in range(actual_n_layers)]
             else:
                 layer_indices = [0]
             filtered_labels = [token_labels[i] if i < len(token_labels) else f"pos{i}" for i in filtered_pos]
@@ -201,6 +210,10 @@ def run_experiment(args: ExperimentArgs) -> int:
                 "section_markers": section_markers,
                 "position_sweep_max": float(pos_sweep.max()),
                 "position_sweep_argmax": int(np.argmax(pos_sweep)),
+                # Config used
+                "component": act_component,
+                "n_layers_sample": act_n_layers,
+                "position_step": act_pos_step,
             }, data_dir / "activation_patching.json")
 
             # Plot heatmap

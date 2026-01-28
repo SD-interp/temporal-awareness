@@ -129,8 +129,12 @@ SMALL_CONFIG = {
     "max_samples": 20,  # Number of preference samples to generate
 
     # Activation patching config
+    # Sweep parameters control granularity of position and layer search
     "max_pairs": 1,  # Number of clean/corrupted pairs for patching
     "position_threshold": 0.03,  # Threshold for filtering important positions
+    "act_patch_n_layers_sample": 6,  # Number of layers to sample in sweep (evenly spaced)
+    "act_patch_component": "resid_post",  # Component to patch: resid_post, attn_out, mlp_out
+    "act_patch_position_step": 1,  # Position stride for sweep (1 = every position)
 
     # Attribution patching config
     "ig_steps": 3,  # Integration steps for EAP-IG (higher = more accurate)
@@ -161,8 +165,12 @@ NORMAL_CONFIG = {
     "max_samples": 50,  # Number of preference samples to generate
 
     # Activation patching config
+    # Sweep parameters control granularity of position and layer search
     "max_pairs": 3,  # Number of clean/corrupted pairs for patching
     "position_threshold": 0.05,  # Threshold for filtering important positions
+    "act_patch_n_layers_sample": 12,  # Number of layers to sample in sweep (evenly spaced)
+    "act_patch_component": "resid_post",  # Component to patch: resid_post, attn_out, mlp_out
+    "act_patch_position_step": 1,  # Position stride for sweep (1 = every position)
 
     # Attribution patching config
     "ig_steps": 10,  # Integration steps for EAP-IG (higher = more accurate)

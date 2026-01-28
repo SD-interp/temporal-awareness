@@ -92,6 +92,8 @@ def run_activation_patching(
     max_pairs: int = 3,
     threshold: float = 0.05,
     component: str = "resid_post",
+    n_layers_sample: int = 12,
+    position_step: int = 1,
 ) -> tuple[np.ndarray, np.ndarray, list[int], list[str], dict[str, int]]:
     """Run activation patching to identify important positions.
 
@@ -101,6 +103,8 @@ def run_activation_patching(
         max_pairs: Number of pairs to process
         threshold: Position threshold for filtering
         component: Component to patch (resid_post, attn_out, mlp_out)
+        n_layers_sample: Number of layers to sample in sweep (evenly spaced)
+        position_step: Stride for position sweep (1 = every position, 2 = every other, etc.)
 
     Returns:
         Tuple of (position_sweep, full_sweep, filtered_positions, token_labels, section_markers)
@@ -127,12 +131,13 @@ def run_activation_patching(
         metric = create_metric(runner, clean_sample, corrupted_sample, clean_text, corrupted_text)
 
     # Position sweep: patch ALL layers at each position
+    # position_step controls granularity (1 = every position, 2 = every other, etc.)
     layers = list(range(runner.n_layers))
     hook_names = [f"blocks.{l}.hook_{component}" for l in layers]
     _, clean_cache = runner.run_with_cache(clean_text, names_filter=lambda n: n in hook_names)
 
     position_sweep = np.zeros(clean_len)
-    for clean_pos in range(clean_len):
+    for clean_pos in range(0, clean_len, position_step):
         corr_pos = pos_mapping.get(clean_pos, clean_pos)
         interventions = []
         for layer in layers:
@@ -156,8 +161,12 @@ def run_activation_patching(
         filtered_positions = [int(np.argmax(position_sweep))]
 
     # Full sweep: individual (layer, position) patching
-    n_layers_sample = min(12, runner.n_layers)
-    layer_indices = [int(i * (runner.n_layers - 1) / (n_layers_sample - 1)) for i in range(n_layers_sample)]
+    # n_layers_sample controls how many layers to sample (evenly spaced)
+    actual_n_layers = min(n_layers_sample, runner.n_layers)
+    if actual_n_layers > 1:
+        layer_indices = [int(i * (runner.n_layers - 1) / (actual_n_layers - 1)) for i in range(actual_n_layers)]
+    else:
+        layer_indices = [0]
 
     full_sweep = np.zeros((len(layer_indices), len(filtered_positions)))
     for li, layer in enumerate(layer_indices):
