@@ -127,7 +127,7 @@ class QueryRunner:
         data = load_json(path)
 
         internals = None
-        if "internals" in data:
+        if data.get("internals"):
             internals = InternalsConfig(
                 activations=data["internals"],
                 token_positions=data.get("token_positions", []),

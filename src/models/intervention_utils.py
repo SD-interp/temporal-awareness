@@ -104,6 +104,47 @@ def scale(
     )
 
 
+def interpolate(
+    layer: int,
+    source_values: Union[np.ndarray, list],
+    target_values: Union[np.ndarray, list],
+    alpha: float = 0.5,
+    positions: Optional[Union[int, list[int]]] = None,
+    neurons: Optional[Union[int, list[int]]] = None,
+    pattern: Optional[str] = None,
+    component: str = "resid_post",
+) -> Intervention:
+    """Interpolate between source and target activations (mode=interpolate).
+
+    Result: source + alpha * (target - source)
+    - alpha=0: use source values
+    - alpha=1: use target values
+
+    Args:
+        layer: Layer to intervene on
+        source_values: Source activations (e.g., corrupted)
+        target_values: Target activations (e.g., clean)
+        alpha: Interpolation factor [0, 1]
+        positions: Optional positions to target
+        neurons: Optional neurons to target
+        pattern: Optional pattern to trigger on
+        component: Component to intervene on
+
+    Returns:
+        Intervention that computes interpolated activations
+    """
+    return Intervention(
+        layer=layer,
+        mode="interpolate",
+        values=np.array(source_values, dtype=np.float32),
+        target_values=np.array(target_values, dtype=np.float32),
+        alpha=alpha,
+        target=_target(positions, neurons, pattern),
+        component=component,
+        strength=1.0,
+    )
+
+
 def _target(positions=None, neurons=None, pattern=None) -> Target:
     if pattern is not None:
         return Target.on_pattern(pattern)

@@ -263,6 +263,8 @@ def compute_eap_ig(
     Returns:
         Dict with 'attn' and 'mlp' attribution arrays
     """
+    from ..models.intervention_utils import interpolate
+
     n_layers = runner.n_layers
 
     def all_filter(n):
@@ -280,71 +282,44 @@ def compute_eap_ig(
     attn_grads_sum = np.zeros((n_layers, clean_len))
     mlp_grads_sum = np.zeros((n_layers, clean_len))
 
-    formatted = runner._apply_chat_template(corrupted_text)
-    input_ids = runner.tokenize(formatted)
-
     with P("eap_ig_integration"):
         for step in range(n_steps):
             alpha = (step + 0.5) / n_steps
 
-            # Create interpolated activations
-            def make_interp_hook(layer, component, alpha=alpha):
-                clean_name = f"blocks.{layer}.hook_{component}"
-                try:
-                    clean_act = clean_cache[clean_name]
-                    corr_act = corr_cache_base[clean_name]
-                except KeyError:
-                    return None
-
-                def hook(act, hook=None):
-                    n_pos = min(act.shape[1], clean_act.shape[1])
-                    valid_mask = corr_pos[:n_pos] < corr_act.shape[1]
-                    for i in range(n_pos):
-                        if valid_mask[i]:
-                            cp = clean_pos[i]
-                            rp = corr_pos[i]
-                            interp = corr_act[0, rp, :] + alpha * (
-                                clean_act[0, cp, :] - corr_act[0, rp, :]
-                            )
-                            act[:, rp, :] = interp.detach()
-                    return act
-
-                return hook
-
-            hooks = []
-            for l in range(n_layers):
+            # Build interpolation interventions for all layers and components
+            interventions = []
+            for layer in range(n_layers):
                 for comp in ["resid_post", "attn_out", "mlp_out"]:
-                    hook_fn = make_interp_hook(l, comp)
-                    if hook_fn is not None:
-                        hooks.append((f"blocks.{l}.hook_{comp}", hook_fn))
+                    hook_name = f"blocks.{layer}.hook_{comp}"
+                    if hook_name not in clean_cache or hook_name not in corr_cache_base:
+                        continue
 
-            cache = {}
+                    clean_act = clean_cache[hook_name][0].detach().cpu().numpy()
+                    corr_act = corr_cache_base[hook_name][0].detach().cpu().numpy()
 
-            def capture_hook(name):
-                def hook(act, hook=None):
-                    cache[name] = act
-                    return act
+                    interventions.append(interpolate(
+                        layer=layer,
+                        source_values=corr_act,
+                        target_values=clean_act,
+                        alpha=alpha,
+                        component=comp,
+                    ))
 
-                return hook
-
-            all_hooks = hooks.copy()
-            for l in range(n_layers):
-                all_hooks.append(
-                    (f"blocks.{l}.hook_resid_post", capture_hook(f"blocks.{l}.hook_resid_post"))
-                )
-
-            logits = runner.model.run_with_hooks(input_ids, fwd_hooks=all_hooks)
+            # Run with interpolation and capture resid_post with gradients
+            logits, cache = runner.forward_with_intervention(
+                corrupted_text, interventions, with_grad=True, capture=True
+            )
             metric_val = metric.compute_raw(logits)
 
-            # Collect all activations for batch gradient computation
+            # Collect resid_post activations for gradient computation
             resid_acts = []
             resid_layers = []
-            for l in range(n_layers):
-                resid_name = f"blocks.{l}.hook_resid_post"
+            for layer in range(n_layers):
+                resid_name = f"blocks.{layer}.hook_resid_post"
                 act = cache.get(resid_name)
                 if act is not None and act.requires_grad:
                     resid_acts.append(act)
-                    resid_layers.append(l)
+                    resid_layers.append(layer)
 
             if not resid_acts:
                 continue
@@ -355,31 +330,31 @@ def compute_eap_ig(
             )
 
             # Accumulate attribution scores
-            for l, grad in zip(resid_layers, grad_list):
+            for layer, grad in zip(resid_layers, grad_list):
                 if grad is None:
                     continue
 
                 # Attention edge
-                attn_name = f"blocks.{l}.hook_attn_out"
+                attn_name = f"blocks.{layer}.hook_attn_out"
                 try:
                     clean_attn = clean_cache[attn_name]
                     corr_attn = corr_cache_base[attn_name]
                     attr = _compute_attribution_vectorized(
                         clean_attn, corr_attn, grad, clean_pos, corr_pos, valid
                     )
-                    attn_grads_sum[l] += attr / n_steps
+                    attn_grads_sum[layer] += attr / n_steps
                 except KeyError:
                     pass
 
                 # MLP edge
-                mlp_name = f"blocks.{l}.hook_mlp_out"
+                mlp_name = f"blocks.{layer}.hook_mlp_out"
                 try:
                     clean_mlp = clean_cache[mlp_name]
                     corr_mlp = corr_cache_base[mlp_name]
                     attr = _compute_attribution_vectorized(
                         clean_mlp, corr_mlp, grad, clean_pos, corr_pos, valid
                     )
-                    mlp_grads_sum[l] += attr / n_steps
+                    mlp_grads_sum[layer] += attr / n_steps
                 except KeyError:
                     pass
 

@@ -14,7 +14,7 @@ from ..analysis.markers import SECTION_COLORS
 SECTION_BG_COLORS = {
     "before_choices": "#FF8C00",       # Dark orange
     "before_time_horizon": "#00CED1",  # Dark cyan
-    "before_choice_output": "#32CD32", # Lime green
+    "before_choice_output": "#32CD32",  # Lime green
 }
 
 

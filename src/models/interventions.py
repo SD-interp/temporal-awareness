@@ -10,7 +10,7 @@ import torch
 
 from ..common.schema_utils import SchemaClass
 
-Mode = Literal["add", "set", "mul"]
+Mode = Literal["add", "set", "mul", "interpolate"]
 Axis = Literal["all", "position", "neuron", "pattern"]
 
 
@@ -55,7 +55,14 @@ class Target(SchemaClass):
 
 @dataclass
 class Intervention(SchemaClass):
-    """Intervention config: layer, mode (add/set/mul), values, target."""
+    """Intervention config: layer, mode (add/set/mul/interpolate), values, target.
+
+    For interpolate mode:
+        - values: source values (e.g., corrupted activations)
+        - target_values: target values (e.g., clean activations)
+        - alpha: interpolation factor (0=source, 1=target)
+        Result: source + alpha * (target - source)
+    """
 
     layer: int
     mode: Mode
@@ -63,10 +70,19 @@ class Intervention(SchemaClass):
     target: Target = field(default_factory=Target.all)
     component: str = "resid_post"
     strength: float = 1.0
+    # For interpolate mode
+    target_values: Optional[np.ndarray] = None
+    alpha: float = 0.5
 
     def __post_init__(self):
         if not isinstance(self.values, np.ndarray):
             self.values = np.array(self.values, dtype=np.float32)
+        if self.target_values is not None and not isinstance(
+            self.target_values, np.ndarray
+        ):
+            self.target_values = np.array(self.target_values, dtype=np.float32)
+        if self.mode == "interpolate" and self.target_values is None:
+            raise ValueError("interpolate mode requires target_values")
         super().__post_init__()
 
     @property
@@ -90,7 +106,9 @@ class PatternMatcher:
     def update(self, token_ids: torch.Tensor):
         if self._triggered:
             return
-        self.generated_text += self.tokenizer.decode(token_ids, skip_special_tokens=True)
+        self.generated_text += self.tokenizer.decode(
+            token_ids, skip_special_tokens=True
+        )
         if self.pattern in self.generated_text:
             self._triggered = True
 
@@ -112,6 +130,12 @@ def create_intervention_hook(
     target = config.target
     mode = config.mode
 
+    # For interpolate mode, also prepare target_values
+    target_values = None
+    alpha = config.alpha
+    if mode == "interpolate" and config.target_values is not None:
+        target_values = torch.tensor(config.target_values, dtype=dtype, device=device)
+
     if target.axis == "pattern":
         if tokenizer is None:
             raise ValueError("tokenizer required for pattern targeting")
@@ -119,14 +143,16 @@ def create_intervention_hook(
 
         def hook(act, hook=None):
             if matcher.should_apply():
-                act = _apply(act, values, mode)
+                act = _apply(act, values, mode, target_values, alpha)
                 matcher.mark_applied()
             return act
 
         return hook, matcher
 
     if target.axis == "all":
-        return lambda act, hook=None: _apply(act, values, mode), None
+        return lambda act, hook=None: _apply(
+            act, values, mode, target_values, alpha
+        ), None
 
     if target.axis == "position":
         positions = target.positions
@@ -134,7 +160,9 @@ def create_intervention_hook(
         def hook(act, hook=None):
             for pos in positions:
                 if pos < act.shape[1]:
-                    act[:, pos] = _apply_slice(act[:, pos], values, mode)
+                    act[:, pos] = _apply_slice(
+                        act[:, pos], values, mode, target_values, alpha
+                    )
             return act
 
         return hook, None
@@ -155,11 +183,28 @@ def create_intervention_hook(
     raise ValueError(f"Unknown axis: {target.axis}")
 
 
-def _apply(act: torch.Tensor, values: torch.Tensor, mode: Mode) -> torch.Tensor:
+def _apply(
+    act: torch.Tensor,
+    values: torch.Tensor,
+    mode: Mode,
+    target_values: Optional[torch.Tensor] = None,
+    alpha: float = 0.5,
+) -> torch.Tensor:
     if mode == "add":
         return act + values
     if mode == "mul":
         return act * values
+    if mode == "interpolate":
+        # values = source, target_values = target
+        # result = source + alpha * (target - source)
+        interp = values + alpha * (target_values - values)
+        # Expand to match act shape [batch, seq, d_model]
+        if interp.dim() == 2 and act.dim() == 3:
+            seq = min(act.shape[1], interp.shape[0])
+            result = act.clone()
+            result[:, :seq] = interp[:seq].unsqueeze(0).expand(act.shape[0], -1, -1)
+            return result
+        return interp
     # set
     if values.dim() == 1:
         return values.expand_as(act)
@@ -169,12 +214,22 @@ def _apply(act: torch.Tensor, values: torch.Tensor, mode: Mode) -> torch.Tensor:
     return result
 
 
-def _apply_slice(act: torch.Tensor, values: torch.Tensor, mode: Mode) -> torch.Tensor:
+def _apply_slice(
+    act: torch.Tensor,
+    values: torch.Tensor,
+    mode: Mode,
+    target_values: Optional[torch.Tensor] = None,
+    alpha: float = 0.5,
+) -> torch.Tensor:
     v = values[-1] if values.dim() > 1 else values
     if mode == "add":
         return act + v
     if mode == "mul":
         return act * v
+    if mode == "interpolate":
+        tv = target_values[-1] if target_values.dim() > 1 else target_values
+        # source + alpha * (target - source)
+        return v + alpha * (tv - v)
     return v.expand_as(act)
 
 

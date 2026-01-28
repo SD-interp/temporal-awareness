@@ -11,12 +11,18 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from ..models import ModelRunner
 
+from ..formatting.configs import DefaultPromptFormat
+
 # Colors for section markers in heatmaps
 SECTION_COLORS = {
     "before_choices": "orange",
     "before_time_horizon": "cyan",
     "before_choice_output": "lime",
 }
+
+# Get choice_prefix from format config (not hardcoded)
+_DEFAULT_FORMAT = DefaultPromptFormat()
+CHOICE_PREFIX = _DEFAULT_FORMAT.const_keywords.get("choice_prefix", "I select:")
 
 
 def find_section_markers(
@@ -30,7 +36,8 @@ def find_section_markers(
     Markers are placed RIGHT BEFORE each section:
     - before_choices: Right before options are presented (first label)
     - before_time_horizon: Right before CONSIDER section
-    - before_choice_output: Right before model's choice (in response)
+    - before_choice_output: Right before model's actual choice output in response
+      (the LAST occurrence of choice_prefix, NOT the one in FORMAT instructions)
 
     Args:
         runner: ModelRunner instance
@@ -66,14 +73,15 @@ def find_section_markers(
     if consider_pos >= 0:
         markers["before_time_horizon"] = text_pos_to_token_pos(consider_pos)
 
-    # Find choice output position - where model outputs its selection
-    # Look for "I select:" (choice_prefix from format)
-    choice_prefix_pos = text.find("I select:")
+    # Find generation start - where model's actual response begins
+    # The choice_prefix appears twice: once in FORMAT instructions, once in actual response
+    # We want the LAST occurrence (the actual model output)
+    choice_prefix_pos = text.find(CHOICE_PREFIX)
     if choice_prefix_pos >= 0:
         # Find the LAST occurrence (in response, not format instructions)
         last_pos = choice_prefix_pos
         while True:
-            next_pos = text.find("I select:", last_pos + 1)
+            next_pos = text.find(CHOICE_PREFIX, last_pos + 1)
             if next_pos < 0:
                 break
             last_pos = next_pos

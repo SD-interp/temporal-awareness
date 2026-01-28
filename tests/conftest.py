@@ -3,10 +3,12 @@
 import sys
 from pathlib import Path
 
-import pytest
+# Add project root to path so 'src' imports work - MUST happen before pytest imports test files
+_project_root = str(Path(__file__).parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
-# Add project root to path so 'src' imports work
-sys.path.insert(0, str(Path(__file__).parent.parent))
+import pytest
 
 
 def pytest_addoption(parser):

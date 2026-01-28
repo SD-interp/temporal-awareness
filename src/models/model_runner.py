@@ -139,8 +139,22 @@ class ModelRunner:
     def d_model(self) -> int:
         return self._backend.get_d_model()
 
-    def tokenize(self, text: str) -> torch.Tensor:
-        return self._backend.tokenize(text)
+    def tokenize(self, text: str, prepend_bos: bool = False) -> torch.Tensor:
+        """Tokenize text into tensor of token IDs.
+
+        Args:
+            text: Input text to tokenize
+            prepend_bos: Whether to prepend BOS token (default False)
+
+        Returns:
+            Token IDs tensor of shape [1, seq_len]
+        """
+        # prepend_bos=False by default for consistent behavior across backends:
+        # - TransformerLens: uses to_tokens(prepend_bos=X) directly
+        # - NNsight/Pyvene: use HF tokenizer, only prepend if bos_token_id exists
+        # Some models (e.g. Qwen) have bos_token_id=None, so prepend_bos=True
+        # may behave differently across backends for those models.
+        return self._backend.tokenize(text, prepend_bos=prepend_bos)
 
     def decode(self, token_ids: torch.Tensor) -> str:
         return self._backend.decode(token_ids)
@@ -286,49 +300,65 @@ class ModelRunner:
         prompt: str,
         names_filter: Optional[callable] = None,
         past_kv_cache: Any = None,
+        prepend_bos: bool = False,
     ) -> tuple[torch.Tensor, dict]:
-        """Run forward pass and return activation cache."""
+        """Run forward pass and return activation cache.
+
+        Args:
+            prompt: Input text
+            names_filter: Function to filter which hooks to cache (e.g. lambda n: 'resid' in n)
+            past_kv_cache: Optional past key-value cache for continuation
+            prepend_bos: Whether to prepend BOS token (default False)
+
+        Returns:
+            Tuple of (logits, cache) where cache maps hook names to activation tensors
+        """
         formatted = self._apply_chat_template(prompt)
-        input_ids = self.tokenize(formatted)
+        # prepend_bos ensures consistent seq_len across backends for activation comparison
+        input_ids = self.tokenize(formatted, prepend_bos=prepend_bos)
         return self._backend.run_with_cache(input_ids, names_filter, past_kv_cache)
 
     def run_with_cache_and_grad(
         self,
         prompt: str,
         names_filter: Optional[callable] = None,
+        prepend_bos: bool = False,
     ) -> tuple[torch.Tensor, dict]:
-        """Run forward pass with gradients enabled and return activation cache.
-
-        Unlike run_with_cache, this does NOT use torch.no_grad(), allowing
-        gradients to flow through cached activations for attribution patching.
+        """Run forward pass with gradients enabled for attribution patching.
 
         Args:
             prompt: Input text
-            names_filter: Optional function to filter which hooks to cache
+            names_filter: Function to filter which hooks to cache
+            prepend_bos: Whether to prepend BOS token (default False)
 
         Returns:
-            (logits, cache) where cache values have requires_grad=True
+            Tuple of (logits, cache) where cache values have requires_grad=True
         """
         formatted = self._apply_chat_template(prompt)
-        input_ids = self.tokenize(formatted)
+        input_ids = self.tokenize(formatted, prepend_bos=prepend_bos)
+        # Unlike run_with_cache, does NOT use torch.no_grad() - gradients flow through
         return self._backend.run_with_cache_and_grad(input_ids, names_filter)
 
     def forward_with_intervention(
         self,
         prompt: str,
         intervention: Intervention,
+        prepend_bos: bool = False,
     ) -> torch.Tensor:
-        """Run forward pass with intervention applied, returning logits.
+        """Run forward pass with intervention applied.
 
         Args:
             prompt: Input text
-            intervention: Intervention to apply during forward pass
+            intervention: Intervention specifying layer, mode, values, and targets
+            prepend_bos: Whether to prepend BOS token (default False)
 
         Returns:
-            Logits tensor from the forward pass
+            Logits tensor of shape [batch, seq_len, vocab_size]
         """
         formatted = self._apply_chat_template(prompt)
-        input_ids = self.tokenize(formatted)
+        # Note: intervention.positions are relative to tokenized input
+        # If prepend_bos=True, position 0 is BOS, position 1 is first real token
+        input_ids = self.tokenize(formatted, prepend_bos=prepend_bos)
         return self._backend.forward_with_intervention(input_ids, intervention)
 
     def init_kv_cache(self):
@@ -346,7 +376,7 @@ class _BackendBase(ABC):
     @abstractmethod
     def get_d_model(self) -> int: ...
     @abstractmethod
-    def tokenize(self, text: str) -> torch.Tensor: ...
+    def tokenize(self, text: str, prepend_bos: bool = False) -> torch.Tensor: ...
     @abstractmethod
     def decode(self, token_ids: torch.Tensor) -> str: ...
     @abstractmethod
@@ -415,8 +445,11 @@ class _TransformerLensBackend(_BackendBase):
     def get_d_model(self) -> int:
         return self.runner.model.cfg.d_model
 
-    def tokenize(self, text: str) -> torch.Tensor:
-        return self.runner.model.to_tokens(text, prepend_bos=True)
+    def tokenize(self, text: str, prepend_bos: bool = False) -> torch.Tensor:
+        """Tokenize text into token IDs tensor."""
+        # TransformerLens natively supports prepend_bos via to_tokens()
+        # This always works regardless of model's bos_token_id setting
+        return self.runner.model.to_tokens(text, prepend_bos=prepend_bos)
 
     def decode(self, token_ids: torch.Tensor) -> str:
         return self.runner.model.to_string(token_ids)
@@ -658,14 +691,25 @@ class _NNsightBackend(_BackendBase):
         super().__init__(runner)
         # Detect model architecture for layer access
         # GPT2: model.transformer.h[i], LLaMA/Mistral: model.model.layers[i]
+        # Store both reference (for len) and path (for trace context access)
         if hasattr(self.runner.model, "transformer"):
             self._layers = self.runner.model.transformer.h
+            self._layers_path = "transformer.h"
         elif hasattr(self.runner.model, "model") and hasattr(
             self.runner.model.model, "layers"
         ):
             self._layers = self.runner.model.model.layers
+            self._layers_path = "model.layers"
         else:
             raise ValueError(f"Unknown model architecture: {type(self.runner.model)}")
+
+    def _get_layer(self, layer_idx: int):
+        """Get layer module through model path (works inside trace context)."""
+        # Must access through model path inside trace, not pre-fetched self._layers
+        if self._layers_path == "transformer.h":
+            return self.runner.model.transformer.h[layer_idx]
+        else:
+            return self.runner.model.model.layers[layer_idx]
 
     def get_tokenizer(self):
         return self.runner.model.tokenizer
@@ -676,14 +720,18 @@ class _NNsightBackend(_BackendBase):
     def get_d_model(self) -> int:
         return self.runner.model.config.hidden_size
 
-    def tokenize(self, text: str) -> torch.Tensor:
-        # Prepend BOS token to match TransformerLens behavior
+    def tokenize(self, text: str, prepend_bos: bool = False) -> torch.Tensor:
+        """Tokenize text into token IDs tensor."""
+        # NNsight uses HuggingFace tokenizer (unlike TransformerLens which has its own)
         tokenizer = self.get_tokenizer()
         ids = tokenizer(text, return_tensors="pt").input_ids
-        bos_id = tokenizer.bos_token_id
-        if bos_id is not None and (ids.shape[1] == 0 or ids[0, 0].item() != bos_id):
-            bos = torch.tensor([[bos_id]], dtype=ids.dtype)
-            ids = torch.cat([bos, ids], dim=1)
+        if prepend_bos:
+            # Only prepend if tokenizer defines bos_token_id (Qwen has None)
+            # This differs from TransformerLens which always has a BOS mechanism
+            bos_id = tokenizer.bos_token_id
+            if bos_id is not None and (ids.shape[1] == 0 or ids[0, 0].item() != bos_id):
+                bos = torch.tensor([[bos_id]], dtype=ids.dtype)
+                ids = torch.cat([bos, ids], dim=1)
         return ids.to(self.runner.device)
 
     def decode(self, token_ids: torch.Tensor) -> str:
@@ -697,37 +745,61 @@ class _NNsightBackend(_BackendBase):
         intervention: Optional[Intervention],
         past_kv_cache: Any = None,
     ) -> str:
+        """Generate text with optional interventions."""
         input_ids = self.tokenize(prompt)
         prompt_len = input_ids.shape[1]
-
-        # Note: Do NOT use torch.no_grad() - it interferes with nnsight's tracing
         generated = input_ids.clone()
 
-        # Prepare steering if needed
-        steering_layer = None
+        # Prepare steering direction BEFORE trace context
+        # (creating tensors inside trace can cause issues with NNsight's graph building)
         steering_direction = None
+        steering_layer_idx = None
         if intervention is not None and isinstance(intervention, Intervention) and intervention.mode == "add":
-            steering_layer = self._layers[intervention.layer]
+            steering_layer_idx = intervention.layer
             steering_direction = torch.tensor(
                 intervention.scaled_values,
                 dtype=self.runner.dtype,
                 device=self.runner.device,
             )
 
+        # Manual token-by-token generation loop
+        # NNsight has model.generate() with tracer.iter for autoregressive generation,
+        # but it only works with LanguageModel wrapper's .generator attribute.
+        # For compatibility with base NNsight wrapper (used by toy models), use manual loop.
         for _ in range(max_new_tokens):
+            # trace() creates intervention context - all tensor ops inside are recorded
             with self.runner.model.trace(generated):
-                if steering_layer is not None:
-                    steering_layer.output[0][:, :, :] += steering_direction
-                logits = self.runner.model.lm_head.output.save()
+                if steering_direction is not None:
+                    # IMPORTANT: Must access layer through model path INSIDE trace context.
+                    # Pre-fetched self._layers[i] returns Envoy proxy that doesn't work
+                    # correctly when used outside its originating trace.
+                    layer = self._get_layer(steering_layer_idx)
 
-            # nnsight 0.5.15 returns tensors directly (no .value)
+                    # KEY INSIGHT: NNsight's layer.output is tensor [batch, seq, hidden] directly
+                    # Raw HuggingFace layers return tuple: (hidden_states, attn_weights, kv_cache)
+                    # But NNsight unwraps this - layer.output IS the hidden_states tensor.
+                    # WRONG: layer.output[0][:,:,:] - this indexes BATCH dim, gives [seq, hidden]
+                    # RIGHT: layer.output[:,:,:] - this is the full [batch, seq, hidden] tensor
+                    layer.output[:, :, :] += steering_direction
+
+                # Get logits from final layer
+                # Real models have lm_head, toy models expose output directly
+                if hasattr(self.runner.model, "lm_head"):
+                    logits = self.runner.model.lm_head.output.save()
+                else:
+                    logits = self.runner.model.output.save()
+
+            # After trace context exits, saved tensors are materialized
+            # NNsight 0.5+ returns tensors directly (older versions needed .value)
             if temperature > 0:
                 probs = torch.softmax(logits[0, -1, :].detach() / temperature, dim=-1)
                 next_token = torch.multinomial(probs, 1).unsqueeze(0)
             else:
+                # Greedy decoding - take argmax
                 next_token = logits[0, -1, :].detach().argmax(dim=-1, keepdim=True).unsqueeze(0)
             generated = torch.cat([generated, next_token], dim=1)
 
+        # Return only newly generated tokens (exclude prompt)
         return self.decode(generated[0, prompt_len:])
 
     def get_next_token_probs(
@@ -774,13 +846,12 @@ class _NNsightBackend(_BackendBase):
         if component in ("resid_post", "resid_pre", "resid_mid"):
             return layer
         elif component == "attn_out":
-            # GPT2: layer.attn, Pythia: layer.attention
-            if hasattr(layer, "attn"):
-                return layer.attn
-            elif hasattr(layer, "attention"):
-                return layer.attention
+            # Access attn directly based on architecture (hasattr doesn't work on Envoy proxies)
+            # GPT2: layer.attn, LLaMA/Qwen: layer.self_attn, Pythia: layer.attention
+            if self._layers_path == "transformer.h":
+                return layer.attn  # GPT2 style
             else:
-                raise ValueError(f"Cannot find attention module in layer: {type(layer)}")
+                return layer.self_attn  # LLaMA/Qwen style
         elif component == "mlp_out":
             return layer.mlp
         else:
@@ -795,16 +866,18 @@ class _NNsightBackend(_BackendBase):
         cache = {}
 
         # Determine which hooks to capture
+        # NNsight requires accessing modules in execution order, so only capture layer outputs
+        # (resid_post). For attn_out/mlp_out, would need tracer.cache() approach.
         hooks_to_capture = []
         for i in range(len(self._layers)):
-            for component in ["resid_post", "attn_out", "mlp_out"]:
-                name = f"blocks.{i}.hook_{component}"
-                if names_filter is None or names_filter(name):
-                    hooks_to_capture.append((i, component, name))
+            name = f"blocks.{i}.hook_resid_post"
+            if names_filter is None or names_filter(name):
+                hooks_to_capture.append((i, "resid_post", name))
 
         with self.runner.model.trace(input_ids):
             for layer_idx, component, name in hooks_to_capture:
-                layer = self._layers[layer_idx]
+                # Must access layer through model path inside trace (not pre-fetched self._layers)
+                layer = self._get_layer(layer_idx)
                 module = self._get_component_module(layer, component)
                 # Module outputs differ: layer/attn return tuple, MLP returns tensor
                 if component == "mlp_out":
@@ -941,14 +1014,18 @@ class _PyveneBackend(_BackendBase):
     def get_d_model(self) -> int:
         return self._d_model
 
-    def tokenize(self, text: str) -> torch.Tensor:
+    def tokenize(self, text: str, prepend_bos: bool = False) -> torch.Tensor:
+        """Tokenize text into token IDs tensor."""
+        # Pyvene uses HuggingFace tokenizer (same as NNsight, unlike TransformerLens)
         tokenizer = self.get_tokenizer()
         ids = tokenizer(text, return_tensors="pt").input_ids
-        # Prepend BOS token to match TransformerLens behavior
-        bos_id = tokenizer.bos_token_id
-        if bos_id is not None and (ids.shape[1] == 0 or ids[0, 0].item() != bos_id):
-            bos = torch.tensor([[bos_id]], dtype=ids.dtype)
-            ids = torch.cat([bos, ids], dim=1)
+        if prepend_bos:
+            # Only prepend if tokenizer defines bos_token_id (Qwen has None)
+            # This differs from TransformerLens which always has a BOS mechanism
+            bos_id = tokenizer.bos_token_id
+            if bos_id is not None and (ids.shape[1] == 0 or ids[0, 0].item() != bos_id):
+                bos = torch.tensor([[bos_id]], dtype=ids.dtype)
+                ids = torch.cat([bos, ids], dim=1)
         return ids.to(self.runner.device)
 
     def decode(self, token_ids: torch.Tensor) -> str:

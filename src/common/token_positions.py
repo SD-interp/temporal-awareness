@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional, Union
 
+from .prompt_keywords import PROMPT_KEYWORDS, LAST_OCCURRENCE_KEYWORDS
+
 
 @dataclass
 class ResolvedPositionInfo:
@@ -26,20 +28,6 @@ class ResolvedPositionInfo:
     """
     tokens: dict[int, str] = field(default_factory=dict)  # pos_idx -> token word
     indices: dict[int, int] = field(default_factory=dict)  # pos_idx -> sequence index
-
-
-# Standard prompt format keywords for position references
-PROMPT_KEYWORDS = {
-    "situation": "SITUATION:",
-    "task": "TASK:",
-    "option_one": "OPTION_ONE:",
-    "option_two": "OPTION_TWO:",
-    "consider": "CONSIDER:",
-    "action": "ACTION:",
-    "format": "FORMAT:",
-    "choice_prefix": "I select:",
-    "reasoning_prefix": "My reasoning:",
-}
 
 
 
@@ -103,11 +91,15 @@ def resolve_position(
     # String: keyword or text search
     if isinstance(spec, str):
         # Check if it's a keyword reference
-        if spec.lower() in PROMPT_KEYWORDS:
-            search_text = PROMPT_KEYWORDS[spec.lower()]
+        keyword = spec.lower()
+        if keyword in PROMPT_KEYWORDS:
+            search_text = PROMPT_KEYWORDS[keyword]
+            # Use last occurrence for keywords like choice_prefix (in response, not FORMAT)
+            use_last = keyword in LAST_OCCURRENCE_KEYWORDS
         else:
             search_text = spec
-        return _search_text(tokens, search_text)
+            use_last = False
+        return _search_text(tokens, search_text, last=use_last)
 
     # Dict spec
     if isinstance(spec, dict):
@@ -115,7 +107,8 @@ def resolve_position(
         if "keyword" in spec:
             keyword = spec["keyword"].lower()
             if keyword in PROMPT_KEYWORDS:
-                return _search_text(tokens, PROMPT_KEYWORDS[keyword])
+                use_last = keyword in LAST_OCCURRENCE_KEYWORDS
+                return _search_text(tokens, PROMPT_KEYWORDS[keyword], last=use_last)
             return ResolvedPosition(index=-1, label=f'"{keyword}"', found=False)
 
         # Text search
@@ -144,28 +137,42 @@ def resolve_position(
     return ResolvedPosition(index=-1, label=str(spec), found=False)
 
 
-def _search_text(tokens: list[str], text: str) -> ResolvedPosition:
-    """Search for text in token list."""
+def _search_text(tokens: list[str], text: str, last: bool = False) -> ResolvedPosition:
+    """Search for text in token list.
+
+    Args:
+        tokens: List of token strings
+        text: Text to search for
+        last: If True, return LAST occurrence; if False, return first
+
+    Returns:
+        ResolvedPosition with index of found token
+    """
     text_lower = text.lower().strip()
     # Remove trailing punctuation for flexible matching
     text_base = text_lower.rstrip(":,.")
     label = f'"{text[:15]}..."' if len(text) > 15 else f'"{text}"'
 
+    matches = []
+
     # Exact match first (with and without punctuation)
     for i, tok in enumerate(tokens):
         tok_clean = tok.lower().strip()
         if text_lower == tok_clean or text_base == tok_clean.rstrip(":."):
-            return ResolvedPosition(index=i, label=label)
+            matches.append(i)
 
     # Substring match (base text without punctuation)
     # Require minimum length to avoid matching punctuation-only tokens
-    for i, tok in enumerate(tokens):
-        tok_clean = tok.lower().strip()
-        tok_base = tok_clean.rstrip(":.")
-        if len(tok_base) >= 2 and text_base in tok_clean:
-            return ResolvedPosition(index=i, label=label)
-        if len(tok_base) >= 2 and tok_base in text_base:
-            return ResolvedPosition(index=i, label=label)
+    if not matches:
+        for i, tok in enumerate(tokens):
+            tok_clean = tok.lower().strip()
+            tok_base = tok_clean.rstrip(":.")
+            if len(tok_base) >= 2 and (text_base in tok_clean or tok_base in text_base):
+                matches.append(i)
+
+    if matches:
+        idx = matches[-1] if last else matches[0]
+        return ResolvedPosition(index=idx, label=label)
 
     return ResolvedPosition(index=-1, label=label, found=False)
 
